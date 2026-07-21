@@ -17,7 +17,24 @@ A multi-agent AI banking assistant (Punjab National Bank themed) built to learn 
 
 ## Setup
 
-Works on **Linux/macOS** and **Windows**. Requires Python 3.12.
+Works on **Linux/macOS** and **Windows**. Requires Python 3.12+.
+
+### Quick setup (one command)
+
+After cloning, from the project root:
+
+```bash
+# Linux / macOS
+bash setup.sh
+```
+```powershell
+# Windows (PowerShell)
+.\setup.ps1
+```
+
+This creates the virtualenv, installs dependencies, creates `.env`, downloads the embedding model (~470 MB, once — needs open internet), and builds the RAG index. It's idempotent, so you can re-run it safely. Afterwards, add your `OPENROUTER_API_KEY` to `.env`.
+
+> Prefer to do it step by step? The manual instructions below do the same thing.
 
 ### 1. Clone & create a virtual environment
 
