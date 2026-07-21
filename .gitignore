@@ -1,0 +1,39 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# ===== Virtual environment =====
+.venv/
+venv/
+env/
+
+# ===== Secrets / config =====
+# .env holds real API keys — NEVER commit it. Commit .env.example instead.
+.env
+*.env
+!.env.example
+
+# ===== Local data / databases =====
+chroma_db/
+
+# ===== Downloaded embedding model (offline use; ~500MB, commit mat karo) =====
+app/rag/models/
+*.db
+*.sqlite3
+
+# ===== Logs =====
+*.log
+logs/
+
+# ===== OS / editor junk =====
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ===== Claude Code local (personal) settings =====
+.claude/settings.local.json

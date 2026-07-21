@@ -1,0 +1,13 @@
+# ===== Web framework + server =====
+# Pinned to exact versions for reproducible builds.
+fastapi==0.139.0
+uvicorn[standard]==0.51.0
+
+# ===== RAG: vector database (local, free) =====
+chromadb==0.5.23
+
+# ===== RAG: multilingual embeddings (local, free) =====
+# Model: paraphrase-multilingual-MiniLM-L12-v2 — Hindi (Devanagari) + Hinglish samajhta hai.
+# NOTE: yeh transitively 'tokenizers' ka naya version laata hai; chromadb ka pin
+# over-strict hai to 'pip' ek dependency-conflict WARNING dega — runtime pe benign hai.
+sentence-transformers==5.6.0
