@@ -48,18 +48,20 @@ Package dirs mein `__init__.py`, data dirs mein `.gitkeep`.
 
 ## 6. Build order (plan)
 1. mock_banking_api.py ✅ → 2. RAG (ingest + retriever) ✅ → 2.5 RAG distance threshold ✅ →
-**3. LangGraph flow ← ABHI YAHAN** (3.1 llm_client ✅ | 3.2 supervisor node ← NEXT | 3.3 rag_agent | 3.4 tool_agent | 3.5 human-loop | 3.6 graph.py) →
+**3. LangGraph flow ← ABHI YAHAN** (3.1 llm_client ✅ | 3.2 supervisor ✅ | 3.3 rag_agent ✅ | 3.4 tool_agent ← NEXT | 3.5 human-loop | 3.6 graph.py) →
 4. guardrails + human-in-loop → 5. observability (Langfuse) → 6. evaluation (RAGAS) + Docker deploy
 
 ## 7. DONE tak (git — repo `main` par, GitHub par pushed)
-> NOTE: is session me Windows repo + Linux repo merge huye → history re-authored (purane hashes invalid). Commits ab noreply identity par. GitHub: LakshyaChauhanProgramming/pnb_workflow_agent
+> NOTE: is session me (a) Windows+Linux repo merge → re-authored, (b) `Co-Authored-By: Claude` trailer SAB commits se strip kiya (user request) → history force-push hui, hashes badalte rahe. Commits noreply identity par. GitHub: LakshyaChauhanProgramming/pnb_workflow_agent
 
 | Commit | Kya |
 |---|---|
-| `13f8c3f` | **Initial** — mock banking API + RAG pipeline + offline model support + scaffold |
-| `67694d6` | cross-platform setup scripts (setup.sh/ps1, download_model.py, .gitattributes) + docs |
-| `5ac0bd0` | CLAUDE.md (Claude Code guidance) |
-| _(is commit)_ | **RAG distance threshold** + **embedding_export** + **LangGraph 3.1 (llm_client)** + deps (langgraph/openai/dotenv) + PROJECT_CONTEXT update |
+| `c78e30d` | **Initial** — mock banking API + RAG pipeline + offline model + scaffold |
+| `a419bbd` | cross-platform setup (setup.sh/ps1, download_model.py, .gitattributes) |
+| `dcd5fe1` | CLAUDE.md |
+| `74a23d4` | RAG distance threshold + embedding_export + LangGraph 3.1 (llm_client) + deps |
+| `9a96b5f` | **Supervisor** (3.2) — LLM intent classify + ChromaDB telemetry fix + llm_client None-guard |
+| _(is commit)_ | **RAG agent** (3.3) — grounded FAQ answer + citations + PROJECT_CONTEXT update |
 
 **Mock bank (`mock_bank/mock_banking_api.py`)** — FastAPI, in-memory fake data.
 Endpoints: `GET /`, `/health`, `/accounts/{acct}`, `/accounts/{acct}/balance`, `/loans/{id}/status`,
@@ -76,7 +78,11 @@ Run: `venv/Scripts/python.exe -m uvicorn mock_bank.mock_banking_api:app --port 8
 
 **Core (`app/core/llm_client.py`)** — OpenRouter client (OpenAI SDK, `base_url` swap). `chat(messages, model=None, temperature=0.3, max_tokens=1024)` → text. Secrets `.env` se (dotenv). Test: `python -m app.core.llm_client`. **WORKING** (Claude Sonnet 5 ne Hinglish jawab diya). ⚠️ OpenRouter account me credits KAM hain — dev ke waqt dhyaan; khatam huye to Gemini free pe switch (abstraction ki wajah se 2-line kaam).
 
-**LangGraph** — installed (`langgraph==1.2.9`). Hello-world graph (supervisor pattern, keyword-classifier, no LLM) scratchpad me banaya-chalaya (mechanics samajhne ke liye; repo me nahi). Asli agents `app/agents/` me 3.2 se banenge.
+**LangGraph** — installed (`langgraph==1.2.9`). Hello-world graph (supervisor pattern, keyword-classifier, no LLM) scratchpad me banaya-chalaya (mechanics samajhne ke liye; repo me nahi). Asli agents `app/agents/` me abhi as standalone functions bane hain; graph.py (3.6) me wire honge.
+
+**Agents (`app/agents/`)** —
+- `supervisor.py` ✅ (3.2): `classify_intent(query)` → LLM se ek label (`balance`/`complaint`/`loan_status`/`faq`). **Guardrail:** normalize + validate (allowlist `INTENTS`) + safe fallback `faq`. `temperature=0, max_tokens=32` (10 pe empty output = starvation bug). Test 5/5 sahi ("paise kat gaye" bina keyword → complaint). Router = **retrieval-vs-tool** decide karta.
+- `rag_agent.py` ✅ (3.3): `answer_faq(query)` → `retrieve(threshold)` → khaali to LLM bulao mat (fallback, no-hallucination) → warna numbered context+source LLM ko (grounding prompt) → answer. Returns `{answer, sources, grounded}`. Live proof mila: OOD query threshold (layer1) se nikli par prompt-grounding (layer2) ne "pata nahi" bolwaya → **defense-in-depth**.
 
 ## 8. Key learnings (interview-ready)
 - **Embeddings semantic hote hain** (meaning, keyword nahi). Eval se pakda: English-only model Hinglish pe fail → multilingual model. Model native Devanagari + casual Hinglish samajhta hai, par *pure transliterated formal Hindi* pe kamzor (mitigation: query ko Devanagari transliterate / bilingual KB).
@@ -87,22 +93,24 @@ Run: `venv/Scripts/python.exe -m uvicorn mock_bank.mock_banking_api:app --port 8
 - **Distance threshold (implemented):** Chroma default = **squared L2** (bounded NAHI, unbounded — humare KB me ~12-30). `max_distance` gate se OOD garbage LLM tak nahi jaata (empty `[]` = honest "pata nahi"). **Trade-off:** strict threshold → sahi jawab bhi block (false negative); loose → garbage pass (false positive) — beech me tune. Squared-L2 se clean separation mushkil (mausam/pizza slip through) → **cosine distance (0-2)** future upgrade.
 - **LangGraph mental model (4 cheezein):** State (shared dict jo flow karti), Node (function jo state update kare), Edge (A→B), Conditional edge (state dekh ke route = supervisor). Nodes sirf changed keys return karte, LangGraph merge karta. Interview: supervisor = conditional-edge + routing function.
 - **LangChain vs LangGraph:** LangChain = seedhi "chains" (linear). LangGraph = graph (loops/branching/human-in-loop/state) — usi company ka, LangChain ke upar; multi-agent ke liye standard. RAG humne haath se banaya (LangChain shortcuts nahi) taaki internals samajh aayein.
-- **LLM API basics:** stateless request-response (har baar poori history bhejo); `messages` roles system/user/assistant; `temperature` low=consistent. **OpenRouter gotcha:** `max_tokens` ke hisaab se credits UPFRONT reserve hote → bina set kiye 402 (humne 1024 set kiya). Provider abstraction (`llm_client.py`) alag rakhne se swap trivial.
+- **LLM API basics:** stateless request-response (har baar poori history bhejo); `messages` roles system/user/assistant; `temperature` low=consistent. **OpenRouter gotcha:** `max_tokens` ke hisaab se credits UPFRONT reserve hote → bina set kiye 402 (humne set kiya). Provider abstraction (`llm_client.py`) alag rakhne se swap trivial.
+- **Guardrail = validation + fallback (supervisor):** LLM output UNTRUSTED maano → normalize (caps/space/punctuation) → validate against allowlist → safe fallback. Guarantee: hamesha ek valid intent, downstream crash/misroute nahi. `faq` safe default kyun: RAG general handler, koi khatarnak side-effect nahi (complaint/transaction galti se trigger nahi hoti).
+- **Grounding + defense-in-depth (rag_agent):** LLM ko SIRF retrieved context se jawab dene ka prompt → hallucination kam + citation. **Live:** ek OOD query threshold (layer1) se nikal gayi par prompt-grounding (layer2) ne "pata nahi" bolwaya → multiple guardrails = no single point of failure.
+- **max_tokens starvation bug:** classifier me `max_tokens=10` → model label emit karne se pehle ruk gaya → empty output → galat fallback. Output ko headroom do; over-optimize mat karo.
+- **ChromaDB 0.5.23 telemetry warning:** `Settings(anonymized_telemetry=False)` + env-var dono ignore → asli fix `logging.getLogger("chromadb.telemetry.product.posthog").setLevel(CRITICAL)` (message `logging.error` se aata). Lesson: source pe fix na ho to logging layer pe suppress.
 
 ## 9. NEXT
 
-### 9.0 ABHI KAR RAHE: Step 3.2 — Supervisor node (LLM se intent classification)
-**Kya:** ek LangGraph node jo user query ko `balance` / `complaint` / `faq` (aur baad me `transaction`) me classify kare — **LLM se, keyword se nahi**. Phir conditional edge us intent pe route kare.
-**Kyun:** "paise kat gaye galat" jaisi query keyword-match se miss hoti; LLM meaning samajhta. Hello-world graph me keyword `if/else` tha — usko LLM se replace karna.
-**Kaise:** (1) `app/agents/supervisor.py` — `chat()` (llm_client) ko ek structured prompt + query do → ek label wapas; (2) State me `route` set; (3) conditional edge se sahi agent node pe. Prompt me labels + "sirf label do" instruction; kam max_tokens (credits bachao).
+### 9.0 ABHI KAR RAHE: Step 3.4 — Tool Agent (mock_bank APIs call)
+**Kya:** ek agent jo `balance`/`loan_status`/`complaint` intents handle kare — mock_bank ke FastAPI endpoints call karke LIVE data laaye ya complaint register kare.
+**Kyun:** ye queries documents (RAG) se nahi, **live data/action** se answer hoti. Supervisor label inhe yahan bhejega (retrieval-vs-tool split).
+**Kaise:** (1) mock_bank chalao (`uvicorn ...mock_banking_api:app --port 8001`); (2) intent→endpoint map: balance→`GET /accounts/{a}/balance`, loan_status→`GET /loans/{id}/status`, complaint→`POST /complaints`; (3) query se account/loan id nikalna (regex ya LLM extraction — decide karna); (4) API result ko natural Hinglish me format. NOTE: mock_bank ALAG process → `requests`/httpx se HTTP call. Fake ids: acct `1111000011110000`/`2222000022220000`, loan `LN1001`/`LN1002`.
 
-### Baaki Step 3 (LangGraph — project ka dil)
-- 3.1 `app/core/llm_client.py` ✅ DONE (OpenRouter, working)
-- 3.2 Supervisor/router — intent classification ← ABHI
-- 3.3 RAG agent — retriever.py + LLM → grounded answer with citations (distance threshold use karega)
-- 3.4 Tool agent — mock_bank APIs call kare
+### Baaki Step 3
+- 3.1 llm_client ✅ | 3.2 supervisor ✅ | 3.3 rag_agent ✅
+- 3.4 Tool agent ← ABHI
 - 3.5 Human-in-the-loop node — sensitive actions (fund transfer) pe approval
-- 3.6 `app/agents/graph.py` — sabko wire karo
+- 3.6 `app/agents/graph.py` — sab wire karo (supervisor → conditional edge → rag_agent / tool_agent)
 
 **Credits reminder:** OpenRouter balance kam hai — agents test karte waqt chhota `max_tokens`, ya Gemini free pe switch (llm_client me base_url+model swap).
 
