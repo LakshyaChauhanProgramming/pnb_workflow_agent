@@ -37,3 +37,6 @@ Thumbs.db
 
 # ===== Claude Code local (personal) settings =====
 .claude/settings.local.json
+
+# ===== Embedding Projector export (generated) =====
+embedding_export/

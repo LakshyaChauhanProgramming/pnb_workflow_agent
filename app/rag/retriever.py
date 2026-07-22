@@ -30,11 +30,22 @@ _ef = embedding_functions.SentenceTransformerEmbeddingFunction(model_name=embed_
 _collection = _client.get_collection(name=COLLECTION_NAME, embedding_function=_ef)
 
 
-def retrieve(query: str, k: int = 3) -> list[dict]:
+def retrieve(query: str, k: int = 3, max_distance: float | None = None) -> list[dict]:
     """Query ke sabse similar top-k chunks laao.
+
+    Args:
+        query: user ka sawaal.
+        k: kitne chunks laane hain (top-k).
+        max_distance: safety gate. Agar diya, to sirf woh chunks rakho jinki
+            distance <= max_distance ho (baaki "irrelevant" samajh ke hata do).
+            None (default) = koi filter nahi (purana behaviour).
 
     Return: list of dicts — har ek mein text, source file, aur distance.
     'distance' jitni KAM, utna zyada similar (ye ChromaDB ki default L2 distance hai).
+
+    NOTE: agar threshold ke baad kuch nahi bacha to KHAALI list [] milegi — matlab
+    "koi relevant context nahi mila". Aage RAG agent isse jaan ke honestly bol sake
+    ki jawab nahi pata, garbage chunk par hallucinate na kare.
     """
     results = _collection.query(query_texts=[query], n_results=k)
 
@@ -44,13 +55,26 @@ def retrieve(query: str, k: int = 3) -> list[dict]:
     metas = results["metadatas"][0]
     dists = results["distances"][0]
 
-    return [
+    hits = [
         {"text": doc, "source": meta["source"], "distance": round(dist, 3)}
         for doc, meta, dist in zip(docs, metas, dists)
     ]
 
+    # Safety gate: threshold se door (zyada distance) wale chunks drop karo.
+    if max_distance is not None:
+        hits = [h for h in hits if h["distance"] <= max_distance]
+
+    return hits
+
 
 if __name__ == "__main__":
-    # Quick manual check
-    for hit in retrieve("home loan ka interest rate kya hai", k=2):
-        print(f"[{hit['distance']}] {hit['source']}: {hit['text'][:80]}...")
+    # Threshold demo: in-domain query relevant chunk laata hai, out-of-domain khaali.
+    THRESHOLD = 20.0
+
+    for q in ["home loan ka interest rate kya hai", "credit card reward points"]:
+        hits = retrieve(q, k=2, max_distance=THRESHOLD)
+        print(f"\nQuery: {q!r}  (max_distance={THRESHOLD})")
+        if not hits:
+            print("  -> koi relevant context nahi mila (khaali).")
+        for hit in hits:
+            print(f"  [{hit['distance']}] {hit['source']}: {hit['text'][:70]}...")

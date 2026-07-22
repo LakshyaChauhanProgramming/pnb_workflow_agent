@@ -6,6 +6,14 @@ uvicorn[standard]==0.51.0
 # ===== RAG: vector database (local, free) =====
 chromadb==0.5.23
 
+# ===== LLM client (OpenRouter = OpenAI-compatible gateway) =====
+openai==2.46.0          # OpenRouter isi SDK se baat karta hai (base_url swap)
+python-dotenv==1.2.2    # .env se secrets load karne ke liye
+
+# ===== Multi-agent orchestration =====
+# Graph-based: nodes + edges + shared state (loops/branching/human-in-loop support).
+langgraph==1.2.9
+
 # ===== RAG: multilingual embeddings (local, free) =====
 # Model: paraphrase-multilingual-MiniLM-L12-v2 — Hindi (Devanagari) + Hinglish samajhta hai.
 # NOTE: yeh transitively 'tokenizers' ka naya version laata hai; chromadb ka pin
