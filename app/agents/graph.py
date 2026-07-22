@@ -21,22 +21,34 @@ Test:
 from typing import TypedDict
 
 from langgraph.graph import START, END, StateGraph
+from langgraph.checkpoint.memory import MemorySaver
 
 from app.agents.rag_agent import answer_faq
 from app.agents.supervisor import classify_intent
-from app.agents.tool_agent import handle_tool
+from app.agents.tool_agent import handle_tool, REQUIRED_SLOT
 
 
 # --- Shared state (poore graph me flow karti) ---
-class State(TypedDict):
-    query: str            # user input
-    intent: str           # supervisor bharega
-    answer: str           # rag/tool bharega
-    sources: list[str]    # rag bharega (tool ke liye khaali)
+# NOTE: total=False → koi bhi key missing ho sakti hai (state.get(...) se safe padho).
+# Checkpointer ki wajah se ye State turns ke beech PERSIST hoti hai (per thread_id).
+class State(TypedDict, total=False):
+    query: str              # user input (current turn)
+    intent: str             # supervisor bharega
+    answer: str             # rag/tool bharega
+    sources: list[str]      # rag bharega (tool ke liye khaali)
+    # --- slot-filling (memory) ---
+    pending_intent: str     # adhoora flow jis field ka intezaar kar raha (None = kuch nahi)
+    pending_query: str      # flow shuru karne wala original sawaal (slot aane par jodenge)
 
 
 # --- Nodes (har ek pehle bana hua function call karta) ---
 def supervisor_node(state: State) -> dict:
+    # Agar hum kisi adhoore flow me hain (pichle turn slot maanga tha) to dobara
+    # classify MAT karo — user ka naya message us pending intent ka jawab (slot value)
+    # hai, uska apna koi intent-signal nahi (jaise akela account number).
+    pending = state.get("pending_intent")
+    if pending:
+        return {"intent": pending}
     return {"intent": classify_intent(state["query"])}
 
 
@@ -46,7 +58,29 @@ def rag_node(state: State) -> dict:
 
 
 def tool_node(state: State) -> dict:
-    return {"answer": handle_tool(state["intent"], state["query"]), "sources": []}
+    intent = state["intent"]
+    slot = REQUIRED_SLOT.get(intent)
+
+    # Intent ko koi slot nahi chahiye → seedha chalao (pending clear rakho).
+    if slot is None:
+        return {"answer": handle_tool(intent, state["query"]),
+                "sources": [], "pending_intent": "", "pending_query": ""}
+
+    field_name, extractor = slot
+    # Pichle adhoore turn ka sawaal + ab wala input jodo — slot dono me se kahin bhi
+    # ho sakta (turn 1 me "balance ... 1111...", ya turn 2 me akela number).
+    prior = state.get("pending_query") or ""
+    combined = f"{prior} {state['query']}".strip()
+
+    if extractor(combined) is None:
+        # Slot abhi bhi missing → user se maango (handler ka apna prompt reuse) aur
+        # pending yaad rakho taaki agla turn is flow ko resume kare.
+        return {"answer": handle_tool(intent, ""),
+                "sources": [], "pending_intent": intent, "pending_query": combined}
+
+    # Slot mil gaya → tool chalao aur pending clear.
+    return {"answer": handle_tool(intent, combined),
+            "sources": [], "pending_intent": "", "pending_query": ""}
 
 
 # --- Routing function (conditional edge): intent dekh ke agla node ---
@@ -69,29 +103,36 @@ def build_graph():
     )
     b.add_edge("rag", END)
     b.add_edge("tool", END)
-    return b.compile()
+    # checkpointer = memory. Har thread_id (= ek conversation) ki State persist hoti,
+    # taaki slot-filling / multi-turn kaam kare. MemorySaver = in-memory (process
+    # restart pe gone) — dev ke liye theek; prod me SqliteSaver/DB checkpointer.
+    return b.compile(checkpointer=MemorySaver())
 
 
 # Module load par ek hi baar compile.
 graph = build_graph()
 
 
-def ask(query: str) -> dict:
-    """Ek query poore graph se chalao → final state ({query, intent, answer, sources})."""
-    return graph.invoke({"query": query})
+def ask(query: str, thread_id: str = "default") -> dict:
+    """Ek query poore graph se chalao → final state.
+
+    thread_id = ek conversation ki pehchaan. Same thread_id = same memory (pichle
+    turns yaad). UI har chat session ko apna thread_id de (warna sab ek me mix ho jayenge).
+    """
+    config = {"configurable": {"thread_id": thread_id}}
+    return graph.invoke({"query": query}, config=config)
 
 
 if __name__ == "__main__":
-    queries = [
-        "savings account ka minimum balance kitna hai",                  # faq  -> rag
-        "mera balance batao account 1111000011110000",                    # balance -> tool
-        "loan LN1001 ka status kya hai",                                  # loan_status -> tool
-        "account 1111000011110000 se ATM me paisa kat gaya par nikla nahi",  # complaint -> tool
+    # Multi-turn slot-filling demo — ek hi thread_id = ek conversation (memory).
+    # (Tool turns ke liye mock_bank port 8001 par ON hona chahiye.)
+    turns = [
+        "mera balance kitna hai",     # balance, account nahi -> poochega (pending set)
+        "1111000011110000",           # akela number -> pending se resume -> balance de
+        "loan LN1001 ka status",      # naya intent (pending clear ho chuka)
     ]
-    for q in queries:
+    for q in turns:
+        final = ask(q, thread_id="demo")
         print(f"\nUSER: {q}")
-        final = ask(q)
-        print(f"  [intent = {final['intent']}]")
+        print(f"  [intent={final['intent']}  pending={final.get('pending_intent') or '-'}]")
         print(f"  BOT: {final['answer']}")
-        if final.get("sources"):
-            print(f"  (sources: {final['sources']})")

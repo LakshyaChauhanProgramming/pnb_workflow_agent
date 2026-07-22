@@ -50,7 +50,7 @@ Package dirs mein `__init__.py`, data dirs mein `.gitkeep`.
 1. mock_banking_api.py ✅ → 2. RAG (ingest + retriever) ✅ → 2.5 RAG distance threshold ✅ →
 3. **LangGraph flow ✅ COMPLETE** (3.1 llm_client ✅ | 3.2 supervisor ✅ | 3.3 rag_agent ✅ | 3.4 tool_agent ✅ | 3.6 graph.py ✅ | 3.5 human-loop = DEFERRED) →
 **Frontend (Streamlit) ✅ (ask() ke upar chat UI, demoable) →
-**4. guardrails + human-in-loop ← ABHI YAHAN** → 5. observability (Langfuse) → 6. evaluation (RAGAS) + Docker deploy
+**4. memory + slot-filling ✅ → guardrails ← ABHI YAHAN → human-in-loop** → 5. observability (Langfuse) → 6. evaluation (RAGAS) + Docker deploy
 
 > ⚠️ **3.5 human-in-the-loop SKIP nahi kiya — DEFER kiya** (learning ke liye koi step chhoote na). Iska asli matlab tab banta hai jab koi sensitive/irreversible action ho (jaise fund transfer). Abhi tools read + low-risk (balance/loan/complaint) hain. Jab transfer-tool add karenge (Step 4 guardrails ke saath), approval-gate wahan lagega.
 
@@ -67,7 +67,8 @@ Package dirs mein `__init__.py`, data dirs mein `.gitkeep`.
 | `faf8508` | **RAG agent** (3.3) — grounded FAQ answer + citations |
 | `d6f4d2a` | **Tool agent** (3.4) — mock_bank HTTP calls (balance/loan/complaint) + httpx pin |
 | `1e40c53` | **graph.py** (3.6) — full multi-agent wiring (Step 3 COMPLETE) |
-| _(is commit)_ | **Streamlit frontend** — chat UI over `ask()` + streamlit dep + PROJECT_CONTEXT update |
+| `ee5f5d6` | **Streamlit frontend** — chat UI over `ask()` + streamlit dep |
+| _(is commit)_ | **Memory + slot-filling (4.0)** — MemorySaver checkpointer + `ask(query, thread_id)` + slot-filling; per-session thread_id in Streamlit; guardrails/human-loop plan doc |
 
 **Mock bank (`mock_bank/mock_banking_api.py`)** — FastAPI, in-memory fake data.
 Endpoints: `GET /`, `/health`, `/accounts/{acct}`, `/accounts/{acct}/balance`, `/loans/{id}/status`,
@@ -90,7 +91,8 @@ Run: `venv/Scripts/python.exe -m uvicorn mock_bank.mock_banking_api:app --port 8
 - `supervisor.py` ✅ (3.2): `classify_intent(query)` → LLM se ek label (`balance`/`complaint`/`loan_status`/`faq`). **Guardrail:** normalize + validate (allowlist `INTENTS`) + safe fallback `faq`. `temperature=0, max_tokens=32` (10 pe empty output = starvation bug). Test 5/5 sahi ("paise kat gaye" bina keyword → complaint). Router = **retrieval-vs-tool** decide karta.
 - `rag_agent.py` ✅ (3.3): `answer_faq(query)` → `retrieve(threshold)` → khaali to LLM bulao mat (fallback, no-hallucination) → warna numbered context+source LLM ko (grounding prompt) → answer. Returns `{answer, sources, grounded}`. Live proof mila: OOD query threshold (layer1) se nikli par prompt-grounding (layer2) ne "pata nahi" bolwaya → **defense-in-depth**.
 - `tool_agent.py` ✅ (3.4): `handle_tool(intent, query)` → `balance`/`loan_status`/`complaint` ke liye mock_bank HTTP APIs call (`httpx`). Regex se id extract (16-digit acct, `LN\d+`). Guards: id missing→maango, 404→friendly, service-down (`RequestError`)→graceful. Test 5/5 sahi. (mock_bank alag process ON hona chahiye.)
-- `graph.py` ✅ (3.6): `build_graph()` → State `{query,intent,answer,sources}`; nodes supervisor/rag/tool; conditional edge (faq→rag, baaki→tool). **`ask(query)` = single entry point** (UI isi ko call karega). End-to-end test 4/4 sahi. **Step 3 COMPLETE — project ka dil ready.**
+- `graph.py` ✅ (3.6 + 4.0): `build_graph()` → State `{query,intent,answer,sources,pending_intent,pending_query}`; nodes supervisor/rag/tool; conditional edge (faq→rag, baaki→tool). **`ask(query, thread_id="default")` = single entry point.** **Step 3 COMPLETE.**
+  - ✅ **4.0 MEMORY + SLOT-FILLING (KNOWN GAP FIXED):** ab `graph.compile(checkpointer=MemorySaver())` → State per `thread_id` PERSIST. supervisor: `pending_intent` set ho to re-classify SKIP (naya message = pending flow ka jawab). tool_node: slot (`REQUIRED_SLOT` se) missing → prompt + `pending_intent`/`pending_query` yaad; mile (prior+ab wala text jod ke) → tool chalao + pending clear. **Verified:** bot ne "account number bataiye" maanga → user ne AKELA `1111000011110000` bheja → balance mil gaya (pehle `faq` misroute hota tha). Thread isolation bhi pass. Streamlit: per-session `thread_id` (uuid) → sessions ki memory alag.
 
 **Frontend (`frontend/streamlit_app.py`)** ✅ — Streamlit chat UI over `ask()`. `st.chat_input`/`st.chat_message`, history `st.session_state` me (Streamlit har interaction pe script RERUN karta). Har jawab ke saath intent + sources caption (transparency). Top pe project-root `sys.path` me daala (script frontend/ se run hota). Run: `.venv/bin/streamlit run frontend/streamlit_app.py --server.port 8501`. Verified: server boots, health `ok`. Tool queries ke liye mock_bank (8001) ON chahiye.
 
@@ -111,13 +113,26 @@ Run: `venv/Scripts/python.exe -m uvicorn mock_bank.mock_banking_api:app --port 8
 - **Agent-calls-tools pattern (tool_agent):** router → intent → tool (external system ka wrapper). RAG (docs) vs Tool (live APIs) — dono ek hi graph me = hybrid knowledge + action agent. mock_bank alag process = separation of concerns (real backend swap trivial).
 - **Graph wiring (3.6):** standalone-tested nodes ko LangGraph ne conditional-edge se connect kiya — supervisor route karta, State har node me travel karti (partial-update merge). Composition + loose coupling: har piece pehle alag test hua, phir graph ne bas join kar diya. `ask()` = single entry point → backend UI-ready.
 - **Backend/frontend separation:** Streamlit UI sirf `ask()` call karti — poora agent logic backend me. Kal React laga do, `ask()` same rahega. Streamlit script har interaction pe top-se-neeche RERUN hota → mutable state `st.session_state` me rakhni padti (warna chat history reset ho jaati).
+- **Conversational memory + slot-filling (4.0):** stateless agent multi-turn me tootta (bot ne account no. maanga, akela number aaya → intent-signal nahi → misroute). Fix = LangGraph **checkpointer** (`MemorySaver`) + **`thread_id`** → State turns ke beech persist. **Slot-filling** = explicit state machine: `pending_intent` set karke "kis field ka intezaar" yaad rakho, agle turn re-classify skip karke flow resume. Interview: (a) checkpointer hi human-in-the-loop `interrupt()` ke liye bhi neev hai; (b) `thread_id` = per-conversation isolation (multi-user safe); (c) MemorySaver in-memory (prod: SqliteSaver/DB).
 
 ## 9. NEXT
 
-### 9.0 ABHI KAR RAHE (break ke baad se resume): Step 4 — Guardrails + Human-in-the-loop
-**Kya:** (a) `app/guardrails/` — PII filter (account no./phone detect ya mask) + prompt-injection check (user input me "ignore previous instructions" type attack pakdo). (b) 3.5 human-in-the-loop — ek sensitive action (fund-transfer tool) + approval-gate.
-**Kyun:** production-readiness + safety. Abhi tak input-sanitization / attack-guard nahi hai; aur koi irreversible action nahi tha (isliye human-loop defer). Transfer add karke dono ek saath.
-**Kaise (sketch):** (1) guardrail functions jo query pe supervisor se PEHLE chalein (graph me pre-node ya wrapper); (2) mock_bank me `POST /transfer` add; (3) tool_agent me transfer handler; (4) graph me transfer intent pe approval interrupt (LangGraph `interrupt()` / conditional pause — human confirm kare tabhi execute).
+### Step 4 — Memory/slot-filling ✅ → Guardrails ← ABHI YAHAN → Human-in-the-loop
+(Detailed plan: `.claude/plans/resilient-knitting-sun.md`. Step-by-step, confirm karke aage.)
+
+**4.0 Conversational memory + slot-filling ✅ DONE** — MemorySaver checkpointer + `ask(query, thread_id)` + slot-filling (`pending_intent`/`pending_query`). Detail + verification §7 graph.py me. Learning §8 me.
+
+**4.1 Guardrails (`app/guardrails/`) ← ABHI YEH**
+- **(a) Prompt-injection** — `prompt_injection.py`: `check_injection(query)->bool` (regex/keyword: "ignore previous instructions", "you are now", "reveal system prompt", etc.). Graph me naya `guardrail_node` (START ke baad, supervisor se pehle); flag → `blocked=True` + refusal → seedha END (LLM/tool skip).
+- **(b) PII filter** — `pii.py`: `mask_pii(text)` (16-digit account, phone, PAN, card → masked). **Decision:** PII sirf LLM-input + (Step 5) logs me mask; tool_agent RAW query par regex extract karta rahe (asli number API ke liye chahiye). Supervisor + rag_agent ke LLM calls me `mask_pii()` lagao.
+- **Kyun:** defense-in-depth — input sanitization at trust boundary + PII minimization (LLM/3rd-party ko zaroorat se zyada mat do).
+
+**4.2 Human-in-the-loop (3.5 defer kiya tha) — fund transfer + approval gate**
+- mock_bank: `TransferIn` + `POST /transfer` (accounts valid? balance kaafi? → debit/credit → `{transfer_id,status,new_balance}`; 404/400 errors).
+- supervisor: `INTENTS` me `transfer` add. tool_agent: `handle_transfer(query)` (from/to account + amount extract; multi-slot).
+- graph: transfer + slots ready → LangGraph `interrupt()` se ruko → human "haan/nahi" (`Command(resume=...)`) → execute/cancel. (4.0 ka checkpointer isi ke liye tha.)
+- streamlit: interrupt aane par confirmation UI + resume.
+- **Kyun:** irreversible action pe human-in-the-loop = agentic safety core pattern; `interrupt()` = durable pause (state save → human input → resume).
 
 ### Break ke baad — quick restart checklist
 - Background servers band ho gaye honge → dobara chalao (alag terminals):

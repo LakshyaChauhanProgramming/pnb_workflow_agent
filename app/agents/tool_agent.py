@@ -97,6 +97,16 @@ _HANDLERS = {
     "complaint": handle_complaint,
 }
 
+# Slot-filling ke liye: har intent ko kaunsa field chahiye + usko text se nikaalne
+# wala extractor. graph.py isse dekh ke decide karta hai ki slot missing hai ya nahi
+# (missing ho to user se maango aur pending flow yaad rakho). Jis intent ka yahan
+# entry nahi (koi field nahi chahiye) — wo seedha chal jata hai.
+REQUIRED_SLOT = {
+    "balance": ("account", _extract_account),
+    "complaint": ("account", _extract_account),
+    "loan_status": ("loan_id", _extract_loan_id),
+}
+
 
 def handle_tool(intent: str, query: str) -> str:
     """Intent → sahi tool chalao. Unknown intent = guard."""

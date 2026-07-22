@@ -12,6 +12,7 @@ NOTE: balance/loan/complaint (tool) queries ke liye mock_bank ALAG process ON ho
 """
 
 import sys
+import uuid
 from pathlib import Path
 
 # Streamlit script ko frontend/ se run karta hai → project root sys.path me daalo
@@ -42,6 +43,11 @@ with st.sidebar:
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+# Har browser-session ka apna thread_id → us session ki apni memory (slot-filling
+# state alag rahe, doosre users se mix na ho). session_state rerun ke paar bacha rehta.
+if "thread_id" not in st.session_state:
+    st.session_state.thread_id = str(uuid.uuid4())
+
 # Purane messages render karo
 for m in st.session_state.messages:
     with st.chat_message(m["role"]):
@@ -58,7 +64,7 @@ if query := st.chat_input("Apna sawaal likhein..."):
     with st.chat_message("assistant"):
         with st.spinner("Soch raha hoon..."):
             try:
-                result = ask(query)
+                result = ask(query, thread_id=st.session_state.thread_id)
                 answer = result.get("answer") or "(koi jawab nahi mila)"
                 meta_bits = [f"intent: `{result.get('intent', '?')}`"]
                 if result.get("sources"):
