@@ -14,7 +14,19 @@ warna query aur documents alag "vector space" mein honge aur match nahi hoga.
 
 from pathlib import Path
 
+import logging
+import os
+
+# ChromaDB 0.5.23 ka telemetry buggy hai (capture() signature mismatch) aur
+# har run pe "Failed to send telemetry event..." error LOG karta hai. Ye warning
+# purely cosmetic hai. Do tarah se chup karate hain:
+#  1) env var + Settings se telemetry off karne ki koshish (kabhi ignore hota),
+#  2) PAKKA fix — us logger ka level CRITICAL kar do taaki error message chhupe.
+os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
+logging.getLogger("chromadb.telemetry.product.posthog").setLevel(logging.CRITICAL)
+
 import chromadb
+from chromadb.config import Settings
 from chromadb.utils import embedding_functions
 
 from app.rag.embed_model import embed_model_name
@@ -25,7 +37,10 @@ COLLECTION_NAME = "pnb_kb"
 # Embedding model: ingest.py wala hi (embed_model.py se resolve hota hai).
 
 # Module load hone par ek hi baar client + collection banao (model reload mehenga hai).
-_client = chromadb.PersistentClient(path=CHROMA_DIR)
+# settings: ChromaDB ka anonymous telemetry band (0.5.23 me buggy warning deta tha).
+_client = chromadb.PersistentClient(
+    path=CHROMA_DIR, settings=Settings(anonymized_telemetry=False)
+)
 _ef = embedding_functions.SentenceTransformerEmbeddingFunction(model_name=embed_model_name())
 _collection = _client.get_collection(name=COLLECTION_NAME, embedding_function=_ef)
 

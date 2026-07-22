@@ -77,7 +77,10 @@ def chat(
         max_tokens=max_tokens,
     )
     # OpenAI-compatible response: choices[0].message.content me text hota hai.
-    return response.choices[0].message.content
+    # Kabhi-kabhi provider content=None deta (khaali/filtered) → "" return karo,
+    # taaki caller pe .strip() etc. crash na ho.
+    content = response.choices[0].message.content
+    return content if content is not None else ""
 
 
 if __name__ == "__main__":

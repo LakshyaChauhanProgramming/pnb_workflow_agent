@@ -17,7 +17,15 @@ huggingface.co block ho to pehle 'download_model.py' chalao (see us file).
 
 from pathlib import Path
 
+import logging
+import os
+
+# ChromaDB 0.5.23 telemetry buggy warning band (cosmetic). Us logger ko chup karo.
+os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
+logging.getLogger("chromadb.telemetry.product.posthog").setLevel(logging.CRITICAL)
+
 import chromadb
+from chromadb.config import Settings
 from chromadb.utils import embedding_functions
 
 from app.rag.embed_model import embed_model_name
@@ -55,7 +63,9 @@ def chunk_text(text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) 
 
 def main() -> None:
     # 1) PersistentClient = vectors disk par save karega (in-memory nahi).
-    client = chromadb.PersistentClient(path=CHROMA_DIR)
+    client = chromadb.PersistentClient(
+        path=CHROMA_DIR, settings=Settings(anonymized_telemetry=False)
+    )
 
     # 2) Embedding function — har document/query ko vector mein badlega.
     ef = embedding_functions.SentenceTransformerEmbeddingFunction(model_name=embed_model_name())

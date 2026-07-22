@@ -26,7 +26,15 @@ Uske baad:
 
 from pathlib import Path
 
+import logging
+import os
+
+# ChromaDB 0.5.23 telemetry buggy warning band (cosmetic). Us logger ko chup karo.
+os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
+logging.getLogger("chromadb.telemetry.product.posthog").setLevel(logging.CRITICAL)
+
 import chromadb
+from chromadb.config import Settings
 
 # --- Config: ingest.py / retriever.py se match ---
 CHROMA_DIR = str(Path(__file__).parent.parent.parent / "chroma_db")
@@ -38,7 +46,9 @@ def main() -> None:
     OUT_DIR.mkdir(exist_ok=True)
 
     # Sirf padhna hai -> embedding_function ki zaroorat nahi (koi naya text embed nahi karte).
-    client = chromadb.PersistentClient(path=CHROMA_DIR)
+    client = chromadb.PersistentClient(
+        path=CHROMA_DIR, settings=Settings(anonymized_telemetry=False)
+    )
     collection = client.get_collection(name=COLLECTION_NAME)
 
     data = collection.get(include=["embeddings", "documents", "metadatas"])
