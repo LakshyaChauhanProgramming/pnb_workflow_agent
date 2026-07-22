@@ -48,8 +48,11 @@ Package dirs mein `__init__.py`, data dirs mein `.gitkeep`.
 
 ## 6. Build order (plan)
 1. mock_banking_api.py ✅ → 2. RAG (ingest + retriever) ✅ → 2.5 RAG distance threshold ✅ →
-**3. LangGraph flow ← ABHI YAHAN** (3.1 llm_client ✅ | 3.2 supervisor ✅ | 3.3 rag_agent ✅ | 3.4 tool_agent ← NEXT | 3.5 human-loop | 3.6 graph.py) →
+3. **LangGraph flow ✅ COMPLETE** (3.1 llm_client ✅ | 3.2 supervisor ✅ | 3.3 rag_agent ✅ | 3.4 tool_agent ✅ | 3.6 graph.py ✅ | 3.5 human-loop = DEFERRED) →
+**Frontend (Streamlit) ← ABHI YAHAN** (ask() ke upar chat UI, demoable) →
 4. guardrails + human-in-loop → 5. observability (Langfuse) → 6. evaluation (RAGAS) + Docker deploy
+
+> ⚠️ **3.5 human-in-the-loop SKIP nahi kiya — DEFER kiya** (learning ke liye koi step chhoote na). Iska asli matlab tab banta hai jab koi sensitive/irreversible action ho (jaise fund transfer). Abhi tools read + low-risk (balance/loan/complaint) hain. Jab transfer-tool add karenge (Step 4 guardrails ke saath), approval-gate wahan lagega.
 
 ## 7. DONE tak (git — repo `main` par, GitHub par pushed)
 > NOTE: is session me (a) Windows+Linux repo merge → re-authored, (b) `Co-Authored-By: Claude` trailer SAB commits se strip kiya (user request) → history force-push hui, hashes badalte rahe. Commits noreply identity par. GitHub: LakshyaChauhanProgramming/pnb_workflow_agent
@@ -61,7 +64,9 @@ Package dirs mein `__init__.py`, data dirs mein `.gitkeep`.
 | `dcd5fe1` | CLAUDE.md |
 | `74a23d4` | RAG distance threshold + embedding_export + LangGraph 3.1 (llm_client) + deps |
 | `9a96b5f` | **Supervisor** (3.2) — LLM intent classify + ChromaDB telemetry fix + llm_client None-guard |
-| _(is commit)_ | **RAG agent** (3.3) — grounded FAQ answer + citations + PROJECT_CONTEXT update |
+| `faf8508` | **RAG agent** (3.3) — grounded FAQ answer + citations |
+| `d6f4d2a` | **Tool agent** (3.4) — mock_bank HTTP calls (balance/loan/complaint) + httpx pin |
+| _(is commit)_ | **graph.py** (3.6) — full multi-agent wiring (Step 3 COMPLETE) + PROJECT_CONTEXT update |
 
 **Mock bank (`mock_bank/mock_banking_api.py`)** — FastAPI, in-memory fake data.
 Endpoints: `GET /`, `/health`, `/accounts/{acct}`, `/accounts/{acct}/balance`, `/loans/{id}/status`,
@@ -83,6 +88,8 @@ Run: `venv/Scripts/python.exe -m uvicorn mock_bank.mock_banking_api:app --port 8
 **Agents (`app/agents/`)** —
 - `supervisor.py` ✅ (3.2): `classify_intent(query)` → LLM se ek label (`balance`/`complaint`/`loan_status`/`faq`). **Guardrail:** normalize + validate (allowlist `INTENTS`) + safe fallback `faq`. `temperature=0, max_tokens=32` (10 pe empty output = starvation bug). Test 5/5 sahi ("paise kat gaye" bina keyword → complaint). Router = **retrieval-vs-tool** decide karta.
 - `rag_agent.py` ✅ (3.3): `answer_faq(query)` → `retrieve(threshold)` → khaali to LLM bulao mat (fallback, no-hallucination) → warna numbered context+source LLM ko (grounding prompt) → answer. Returns `{answer, sources, grounded}`. Live proof mila: OOD query threshold (layer1) se nikli par prompt-grounding (layer2) ne "pata nahi" bolwaya → **defense-in-depth**.
+- `tool_agent.py` ✅ (3.4): `handle_tool(intent, query)` → `balance`/`loan_status`/`complaint` ke liye mock_bank HTTP APIs call (`httpx`). Regex se id extract (16-digit acct, `LN\d+`). Guards: id missing→maango, 404→friendly, service-down (`RequestError`)→graceful. Test 5/5 sahi. (mock_bank alag process ON hona chahiye.)
+- `graph.py` ✅ (3.6): `build_graph()` → State `{query,intent,answer,sources}`; nodes supervisor/rag/tool; conditional edge (faq→rag, baaki→tool). **`ask(query)` = single entry point** (UI isi ko call karega). End-to-end test 4/4 sahi. **Step 3 COMPLETE — project ka dil ready.**
 
 ## 8. Key learnings (interview-ready)
 - **Embeddings semantic hote hain** (meaning, keyword nahi). Eval se pakda: English-only model Hinglish pe fail → multilingual model. Model native Devanagari + casual Hinglish samajhta hai, par *pure transliterated formal Hindi* pe kamzor (mitigation: query ko Devanagari transliterate / bilingual KB).
@@ -98,21 +105,21 @@ Run: `venv/Scripts/python.exe -m uvicorn mock_bank.mock_banking_api:app --port 8
 - **Grounding + defense-in-depth (rag_agent):** LLM ko SIRF retrieved context se jawab dene ka prompt → hallucination kam + citation. **Live:** ek OOD query threshold (layer1) se nikal gayi par prompt-grounding (layer2) ne "pata nahi" bolwaya → multiple guardrails = no single point of failure.
 - **max_tokens starvation bug:** classifier me `max_tokens=10` → model label emit karne se pehle ruk gaya → empty output → galat fallback. Output ko headroom do; over-optimize mat karo.
 - **ChromaDB 0.5.23 telemetry warning:** `Settings(anonymized_telemetry=False)` + env-var dono ignore → asli fix `logging.getLogger("chromadb.telemetry.product.posthog").setLevel(CRITICAL)` (message `logging.error` se aata). Lesson: source pe fix na ho to logging layer pe suppress.
+- **Agent-calls-tools pattern (tool_agent):** router → intent → tool (external system ka wrapper). RAG (docs) vs Tool (live APIs) — dono ek hi graph me = hybrid knowledge + action agent. mock_bank alag process = separation of concerns (real backend swap trivial).
+- **Graph wiring (3.6):** standalone-tested nodes ko LangGraph ne conditional-edge se connect kiya — supervisor route karta, State har node me travel karti (partial-update merge). Composition + loose coupling: har piece pehle alag test hua, phir graph ne bas join kar diya. `ask()` = single entry point → backend UI-ready.
 
 ## 9. NEXT
 
-### 9.0 ABHI KAR RAHE: Step 3.4 — Tool Agent (mock_bank APIs call)
-**Kya:** ek agent jo `balance`/`loan_status`/`complaint` intents handle kare — mock_bank ke FastAPI endpoints call karke LIVE data laaye ya complaint register kare.
-**Kyun:** ye queries documents (RAG) se nahi, **live data/action** se answer hoti. Supervisor label inhe yahan bhejega (retrieval-vs-tool split).
-**Kaise:** (1) mock_bank chalao (`uvicorn ...mock_banking_api:app --port 8001`); (2) intent→endpoint map: balance→`GET /accounts/{a}/balance`, loan_status→`GET /loans/{id}/status`, complaint→`POST /complaints`; (3) query se account/loan id nikalna (regex ya LLM extraction — decide karna); (4) API result ko natural Hinglish me format. NOTE: mock_bank ALAG process → `requests`/httpx se HTTP call. Fake ids: acct `1111000011110000`/`2222000022220000`, loan `LN1001`/`LN1002`.
+### 9.0 ABHI KAR RAHE: Frontend — Streamlit chat UI
+**Kya:** `frontend/streamlit_app.py` — ek simple chat interface jo `app.agents.graph.ask(query)` call kare aur jawab (+ intent + sources) dikhaye.
+**Kyun:** ab tak sab CLI se test hua. Streamlit se project DEMOABLE ban jata — resume/interview me live dikha sakte. Streamlit = pure Python, UI banane ka fastest tarika (React baad me).
+**Kaise:** (1) `pip install streamlit`; (2) `st.chat_input` + `st.chat_message` se chat loop; (3) har user msg pe `ask()` call, `st.session_state` me history rakho; (4) intent + sources bhi dikhao (transparency). NOTE: tool queries ke liye mock_bank alag process ON hona chahiye. Run: `streamlit run frontend/streamlit_app.py`.
 
-### Baaki Step 3
-- 3.1 llm_client ✅ | 3.2 supervisor ✅ | 3.3 rag_agent ✅
-- 3.4 Tool agent ← ABHI
-- 3.5 Human-in-the-loop node — sensitive actions (fund transfer) pe approval
-- 3.6 `app/agents/graph.py` — sab wire karo (supervisor → conditional edge → rag_agent / tool_agent)
+### Deferred / baaki
+- **3.5 Human-in-the-loop** — DEFER (build order me note dekho): fund-transfer jaisa sensitive action add karte waqt approval-gate lagega (Step 4 ke saath).
+- Step 4 guardrails (PII + prompt-injection) → 5 observability (Langfuse) → 6 eval (RAGAS) + Docker deploy.
 
-**Credits reminder:** OpenRouter balance kam hai — agents test karte waqt chhota `max_tokens`, ya Gemini free pe switch (llm_client me base_url+model swap).
+**Credits reminder:** OpenRouter balance kam hai — test karte waqt chhota `max_tokens`, ya Gemini free pe switch (llm_client me base_url+model swap).
 
 ---
 *Yeh file repo ke saath travel karti hai (git). Naye system pe (Linux/mac ya Windows): `git clone` →
