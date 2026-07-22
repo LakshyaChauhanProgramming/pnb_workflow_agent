@@ -15,6 +15,9 @@ httpx==0.28.1           # tool_agent -> mock_bank HTTP calls (direct dep)
 # Graph-based: nodes + edges + shared state (loops/branching/human-in-loop support).
 langgraph==1.2.9
 
+# ===== Frontend (chat UI) =====
+streamlit==1.60.0       # pure-Python chat UI over ask() (React later)
+
 # ===== RAG: multilingual embeddings (local, free) =====
 # Model: paraphrase-multilingual-MiniLM-L12-v2 — Hindi (Devanagari) + Hinglish samajhta hai.
 # NOTE: yeh transitively 'tokenizers' ka naya version laata hai; chromadb ka pin

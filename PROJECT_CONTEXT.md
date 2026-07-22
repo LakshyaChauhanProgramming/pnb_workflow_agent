@@ -49,8 +49,8 @@ Package dirs mein `__init__.py`, data dirs mein `.gitkeep`.
 ## 6. Build order (plan)
 1. mock_banking_api.py ✅ → 2. RAG (ingest + retriever) ✅ → 2.5 RAG distance threshold ✅ →
 3. **LangGraph flow ✅ COMPLETE** (3.1 llm_client ✅ | 3.2 supervisor ✅ | 3.3 rag_agent ✅ | 3.4 tool_agent ✅ | 3.6 graph.py ✅ | 3.5 human-loop = DEFERRED) →
-**Frontend (Streamlit) ← ABHI YAHAN** (ask() ke upar chat UI, demoable) →
-4. guardrails + human-in-loop → 5. observability (Langfuse) → 6. evaluation (RAGAS) + Docker deploy
+**Frontend (Streamlit) ✅ (ask() ke upar chat UI, demoable) →
+**4. guardrails + human-in-loop ← ABHI YAHAN** → 5. observability (Langfuse) → 6. evaluation (RAGAS) + Docker deploy
 
 > ⚠️ **3.5 human-in-the-loop SKIP nahi kiya — DEFER kiya** (learning ke liye koi step chhoote na). Iska asli matlab tab banta hai jab koi sensitive/irreversible action ho (jaise fund transfer). Abhi tools read + low-risk (balance/loan/complaint) hain. Jab transfer-tool add karenge (Step 4 guardrails ke saath), approval-gate wahan lagega.
 
@@ -66,7 +66,8 @@ Package dirs mein `__init__.py`, data dirs mein `.gitkeep`.
 | `9a96b5f` | **Supervisor** (3.2) — LLM intent classify + ChromaDB telemetry fix + llm_client None-guard |
 | `faf8508` | **RAG agent** (3.3) — grounded FAQ answer + citations |
 | `d6f4d2a` | **Tool agent** (3.4) — mock_bank HTTP calls (balance/loan/complaint) + httpx pin |
-| _(is commit)_ | **graph.py** (3.6) — full multi-agent wiring (Step 3 COMPLETE) + PROJECT_CONTEXT update |
+| `1e40c53` | **graph.py** (3.6) — full multi-agent wiring (Step 3 COMPLETE) |
+| _(is commit)_ | **Streamlit frontend** — chat UI over `ask()` + streamlit dep + PROJECT_CONTEXT update |
 
 **Mock bank (`mock_bank/mock_banking_api.py`)** — FastAPI, in-memory fake data.
 Endpoints: `GET /`, `/health`, `/accounts/{acct}`, `/accounts/{acct}/balance`, `/loans/{id}/status`,
@@ -91,6 +92,8 @@ Run: `venv/Scripts/python.exe -m uvicorn mock_bank.mock_banking_api:app --port 8
 - `tool_agent.py` ✅ (3.4): `handle_tool(intent, query)` → `balance`/`loan_status`/`complaint` ke liye mock_bank HTTP APIs call (`httpx`). Regex se id extract (16-digit acct, `LN\d+`). Guards: id missing→maango, 404→friendly, service-down (`RequestError`)→graceful. Test 5/5 sahi. (mock_bank alag process ON hona chahiye.)
 - `graph.py` ✅ (3.6): `build_graph()` → State `{query,intent,answer,sources}`; nodes supervisor/rag/tool; conditional edge (faq→rag, baaki→tool). **`ask(query)` = single entry point** (UI isi ko call karega). End-to-end test 4/4 sahi. **Step 3 COMPLETE — project ka dil ready.**
 
+**Frontend (`frontend/streamlit_app.py`)** ✅ — Streamlit chat UI over `ask()`. `st.chat_input`/`st.chat_message`, history `st.session_state` me (Streamlit har interaction pe script RERUN karta). Har jawab ke saath intent + sources caption (transparency). Top pe project-root `sys.path` me daala (script frontend/ se run hota). Run: `.venv/bin/streamlit run frontend/streamlit_app.py --server.port 8501`. Verified: server boots, health `ok`. Tool queries ke liye mock_bank (8001) ON chahiye.
+
 ## 8. Key learnings (interview-ready)
 - **Embeddings semantic hote hain** (meaning, keyword nahi). Eval se pakda: English-only model Hinglish pe fail → multilingual model. Model native Devanagari + casual Hinglish samajhta hai, par *pure transliterated formal Hindi* pe kamzor (mitigation: query ko Devanagari transliterate / bilingual KB).
 - **Embeddings ka math intuition** (interview-ready): text → high-dim space me point (yahan 384-dim). Similar meaning = paas-paas points. Similarity naapte hain **cosine similarity** (`A·B/(|A||B|)`, angle-based, -1..+1) ya **L2 distance** (Chroma default; kam = similar). Directions rishte encode karti hain (`king−man+woman≈queen`). Numbers self-supervised training se aate hain (distributional hypothesis: "same context = same meaning"); sentence-transformers isko **contrastive learning** (paraphrase pairs paas, alag door) se refine karta hai. Zaroori: query aur docs **same model** se embed karo warna spaces align nahi honge.
@@ -107,17 +110,23 @@ Run: `venv/Scripts/python.exe -m uvicorn mock_bank.mock_banking_api:app --port 8
 - **ChromaDB 0.5.23 telemetry warning:** `Settings(anonymized_telemetry=False)` + env-var dono ignore → asli fix `logging.getLogger("chromadb.telemetry.product.posthog").setLevel(CRITICAL)` (message `logging.error` se aata). Lesson: source pe fix na ho to logging layer pe suppress.
 - **Agent-calls-tools pattern (tool_agent):** router → intent → tool (external system ka wrapper). RAG (docs) vs Tool (live APIs) — dono ek hi graph me = hybrid knowledge + action agent. mock_bank alag process = separation of concerns (real backend swap trivial).
 - **Graph wiring (3.6):** standalone-tested nodes ko LangGraph ne conditional-edge se connect kiya — supervisor route karta, State har node me travel karti (partial-update merge). Composition + loose coupling: har piece pehle alag test hua, phir graph ne bas join kar diya. `ask()` = single entry point → backend UI-ready.
+- **Backend/frontend separation:** Streamlit UI sirf `ask()` call karti — poora agent logic backend me. Kal React laga do, `ask()` same rahega. Streamlit script har interaction pe top-se-neeche RERUN hota → mutable state `st.session_state` me rakhni padti (warna chat history reset ho jaati).
 
 ## 9. NEXT
 
-### 9.0 ABHI KAR RAHE: Frontend — Streamlit chat UI
-**Kya:** `frontend/streamlit_app.py` — ek simple chat interface jo `app.agents.graph.ask(query)` call kare aur jawab (+ intent + sources) dikhaye.
-**Kyun:** ab tak sab CLI se test hua. Streamlit se project DEMOABLE ban jata — resume/interview me live dikha sakte. Streamlit = pure Python, UI banane ka fastest tarika (React baad me).
-**Kaise:** (1) `pip install streamlit`; (2) `st.chat_input` + `st.chat_message` se chat loop; (3) har user msg pe `ask()` call, `st.session_state` me history rakho; (4) intent + sources bhi dikhao (transparency). NOTE: tool queries ke liye mock_bank alag process ON hona chahiye. Run: `streamlit run frontend/streamlit_app.py`.
+### 9.0 ABHI KAR RAHE (break ke baad se resume): Step 4 — Guardrails + Human-in-the-loop
+**Kya:** (a) `app/guardrails/` — PII filter (account no./phone detect ya mask) + prompt-injection check (user input me "ignore previous instructions" type attack pakdo). (b) 3.5 human-in-the-loop — ek sensitive action (fund-transfer tool) + approval-gate.
+**Kyun:** production-readiness + safety. Abhi tak input-sanitization / attack-guard nahi hai; aur koi irreversible action nahi tha (isliye human-loop defer). Transfer add karke dono ek saath.
+**Kaise (sketch):** (1) guardrail functions jo query pe supervisor se PEHLE chalein (graph me pre-node ya wrapper); (2) mock_bank me `POST /transfer` add; (3) tool_agent me transfer handler; (4) graph me transfer intent pe approval interrupt (LangGraph `interrupt()` / conditional pause — human confirm kare tabhi execute).
 
-### Deferred / baaki
-- **3.5 Human-in-the-loop** — DEFER (build order me note dekho): fund-transfer jaisa sensitive action add karte waqt approval-gate lagega (Step 4 ke saath).
-- Step 4 guardrails (PII + prompt-injection) → 5 observability (Langfuse) → 6 eval (RAGAS) + Docker deploy.
+### Break ke baad — quick restart checklist
+- Background servers band ho gaye honge → dobara chalao (alag terminals):
+  - `.venv/bin/uvicorn mock_bank.mock_banking_api:app --port 8001`
+  - `.venv/bin/streamlit run frontend/streamlit_app.py --server.port 8501`
+- Windows machine pe kaam kiya ho to pehle `git pull` (is Linux repo se sync).
+
+### Baaki
+- Step 5 observability (Langfuse) → 6 eval (RAGAS) + Docker deploy.
 
 **Credits reminder:** OpenRouter balance kam hai — test karte waqt chhota `max_tokens`, ya Gemini free pe switch (llm_client me base_url+model swap).
 
