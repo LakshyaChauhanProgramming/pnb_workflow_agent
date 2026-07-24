@@ -50,7 +50,7 @@ Package dirs mein `__init__.py`, data dirs mein `.gitkeep`.
 1. mock_banking_api.py ✅ → 2. RAG (ingest + retriever) ✅ → 2.5 RAG distance threshold ✅ →
 3. **LangGraph flow ✅ COMPLETE** (3.1 llm_client ✅ | 3.2 supervisor ✅ | 3.3 rag_agent ✅ | 3.4 tool_agent ✅ | 3.6 graph.py ✅ | 3.5 human-loop = DEFERRED) →
 **Frontend (Streamlit) ✅ (ask() ke upar chat UI, demoable) →
-**4. memory + slot-filling ✅ → guardrails ← ABHI YAHAN → human-in-loop** → 5. observability (Langfuse) → 6. evaluation (RAGAS) + Docker deploy
+**4. memory + slot-filling ✅ → guardrails [4.1a prompt-injection ✅ | 4.1b PII ✅] → 4.2 human-in-loop ← ABHI YAHAN** → 5. observability (Langfuse) → 6. evaluation (RAGAS) + Docker deploy
 
 > ⚠️ **3.5 human-in-the-loop SKIP nahi kiya — DEFER kiya** (learning ke liye koi step chhoote na). Iska asli matlab tab banta hai jab koi sensitive/irreversible action ho (jaise fund transfer). Abhi tools read + low-risk (balance/loan/complaint) hain. Jab transfer-tool add karenge (Step 4 guardrails ke saath), approval-gate wahan lagega.
 
@@ -68,7 +68,9 @@ Package dirs mein `__init__.py`, data dirs mein `.gitkeep`.
 | `d6f4d2a` | **Tool agent** (3.4) — mock_bank HTTP calls (balance/loan/complaint) + httpx pin |
 | `1e40c53` | **graph.py** (3.6) — full multi-agent wiring (Step 3 COMPLETE) |
 | `ee5f5d6` | **Streamlit frontend** — chat UI over `ask()` + streamlit dep |
-| _(is commit)_ | **Memory + slot-filling (4.0)** — MemorySaver checkpointer + `ask(query, thread_id)` + slot-filling; per-session thread_id in Streamlit; guardrails/human-loop plan doc |
+| `ee...` (last) | **Memory + slot-filling (4.0)** — MemorySaver checkpointer + `ask(query, thread_id)` + slot-filling; per-session thread_id in Streamlit; guardrails/human-loop plan doc |
+| _(uncommitted)_ | **Prompt-injection guardrail (4.1a)** — `prompt_injection.py` detector + `guardrail_node` in graph.py (START→guardrail→END-if-blocked); English refusal; verified |
+| _(uncommitted)_ | **PII masking (4.1b)** — `pii.py` `mask_pii()` (16-digit acct/card, PAN, phone → last-4 visible) + wired into supervisor & rag_agent LLM-inputs (NOT tool_agent/retrieval); verified |
 
 **Mock bank (`mock_bank/mock_banking_api.py`)** — FastAPI, in-memory fake data.
 Endpoints: `GET /`, `/health`, `/accounts/{acct}`, `/accounts/{acct}/balance`, `/loans/{id}/status`,
@@ -91,7 +93,9 @@ Run: `venv/Scripts/python.exe -m uvicorn mock_bank.mock_banking_api:app --port 8
 - `supervisor.py` ✅ (3.2): `classify_intent(query)` → LLM se ek label (`balance`/`complaint`/`loan_status`/`faq`). **Guardrail:** normalize + validate (allowlist `INTENTS`) + safe fallback `faq`. `temperature=0, max_tokens=32` (10 pe empty output = starvation bug). Test 5/5 sahi ("paise kat gaye" bina keyword → complaint). Router = **retrieval-vs-tool** decide karta.
 - `rag_agent.py` ✅ (3.3): `answer_faq(query)` → `retrieve(threshold)` → khaali to LLM bulao mat (fallback, no-hallucination) → warna numbered context+source LLM ko (grounding prompt) → answer. Returns `{answer, sources, grounded}`. Live proof mila: OOD query threshold (layer1) se nikli par prompt-grounding (layer2) ne "pata nahi" bolwaya → **defense-in-depth**.
 - `tool_agent.py` ✅ (3.4): `handle_tool(intent, query)` → `balance`/`loan_status`/`complaint` ke liye mock_bank HTTP APIs call (`httpx`). Regex se id extract (16-digit acct, `LN\d+`). Guards: id missing→maango, 404→friendly, service-down (`RequestError`)→graceful. Test 5/5 sahi. (mock_bank alag process ON hona chahiye.)
-- `graph.py` ✅ (3.6 + 4.0): `build_graph()` → State `{query,intent,answer,sources,pending_intent,pending_query}`; nodes supervisor/rag/tool; conditional edge (faq→rag, baaki→tool). **`ask(query, thread_id="default")` = single entry point.** **Step 3 COMPLETE.**
+- `graph.py` ✅ (3.6 + 4.0 + 4.1a): `build_graph()` → State `{query,intent,answer,sources,pending_intent,pending_query,blocked}`; nodes guardrail/supervisor/rag/tool; **flow ab `START→guardrail→(blocked→END | ok→supervisor)→(faq→rag, baaki→tool)→END`**. **`ask(query, thread_id="default")` = single entry point.** **Step 3 COMPLETE.**
+  - ✅ **4.1a PROMPT-INJECTION GUARDRAIL:** `app/guardrails/prompt_injection.py` → `check_injection(query)->bool` (12 case-insensitive regex patterns: "ignore previous instructions", "you are now", "reveal system prompt", "jailbreak", "bypass safety", etc.; pre-compiled; empty/None→False fail-safe). Graph me `guardrail_node` START ke baad → suspect hua to `blocked=True` + **English** refusal → conditional edge `blocked→END` (supervisor/rag/tool sab skip = koi LLM/tool call nahi). **Verified 4-turn demo:** slot-filling (turn 1-2) + loan (turn 3) intact, injection (turn 4) blocked. Interview note: blocked query supervisor skip karti → `intent` stale reh jaata (turn 3 ka) par routing FRESH `blocked` flag pe based hai, stale field pe nahi.
+  - ✅ **4.1b PII MASKING:** `app/guardrails/pii.py` → `mask_pii(text)->str` (regex: 16-digit account/card → `************0000`, PAN `ABCDE1234F` → `ABCDE****F`, phone → `******3210`; last-4/first-5 visible; empty/None→unchanged fail-safe). **Selective (trust-boundary) wiring:** mask sirf `supervisor.classify_intent` + `rag_agent` ke LLM-prompt par (3rd-party ko sirf MEANING chahiye). **Mask NAHI kiya:** (a) `tool_agent` — RAW query se asli account number nikaal ke mock_bank API bhejta; (b) RAG **retrieval** — masked digits embedding-match bigaad dete. **Verified:** supervisor 6/6 (PII wali query bhi `balance`), rag_agent grounded+fallback dono un-affected, graph 4-turn e2e intact. Interview: PII regex naive first-layer (defense-in-depth), account/card 16-digit ambiguity → dono ek pattern se mask. Phone-regex ka classic bug: optional `[\s-]?` separator prefix-group ke bahar tha to peeche ka space kha jaata → separator ko `(?:(?:\+?91|0)[\s-]?)?` ke andar nest kiya.
   - ✅ **4.0 MEMORY + SLOT-FILLING (KNOWN GAP FIXED):** ab `graph.compile(checkpointer=MemorySaver())` → State per `thread_id` PERSIST. supervisor: `pending_intent` set ho to re-classify SKIP (naya message = pending flow ka jawab). tool_node: slot (`REQUIRED_SLOT` se) missing → prompt + `pending_intent`/`pending_query` yaad; mile (prior+ab wala text jod ke) → tool chalao + pending clear. **Verified:** bot ne "account number bataiye" maanga → user ne AKELA `1111000011110000` bheja → balance mil gaya (pehle `faq` misroute hota tha). Thread isolation bhi pass. Streamlit: per-session `thread_id` (uuid) → sessions ki memory alag.
 
 **Frontend (`frontend/streamlit_app.py`)** ✅ — Streamlit chat UI over `ask()`. `st.chat_input`/`st.chat_message`, history `st.session_state` me (Streamlit har interaction pe script RERUN karta). Har jawab ke saath intent + sources caption (transparency). Top pe project-root `sys.path` me daala (script frontend/ se run hota). Run: `.venv/bin/streamlit run frontend/streamlit_app.py --server.port 8501`. Verified: server boots, health `ok`. Tool queries ke liye mock_bank (8001) ON chahiye.
@@ -108,6 +112,7 @@ Run: `venv/Scripts/python.exe -m uvicorn mock_bank.mock_banking_api:app --port 8
 - **LLM API basics:** stateless request-response (har baar poori history bhejo); `messages` roles system/user/assistant; `temperature` low=consistent. **OpenRouter gotcha:** `max_tokens` ke hisaab se credits UPFRONT reserve hote → bina set kiye 402 (humne set kiya). Provider abstraction (`llm_client.py`) alag rakhne se swap trivial.
 - **Guardrail = validation + fallback (supervisor):** LLM output UNTRUSTED maano → normalize (caps/space/punctuation) → validate against allowlist → safe fallback. Guarantee: hamesha ek valid intent, downstream crash/misroute nahi. `faq` safe default kyun: RAG general handler, koi khatarnak side-effect nahi (complaint/transaction galti se trigger nahi hoti).
 - **Grounding + defense-in-depth (rag_agent):** LLM ko SIRF retrieved context se jawab dene ka prompt → hallucination kam + citation. **Live:** ek OOD query threshold (layer1) se nikal gayi par prompt-grounding (layer2) ne "pata nahi" bolwaya → multiple guardrails = no single point of failure.
+- **PII masking = trust-boundary decision (4.1b):** LLM ek 3rd party hai (OpenRouter→Anthropic) → usko sensitive data zaroorat se zyada mat bhejo (data minimization; GDPR / India DPDP principle). **Kahan mask karna hai ye WHO-NEEDS-WHAT se decide hota, blanket nahi:** (a) supervisor/rag_agent ko sirf *meaning* chahiye → LLM-input mask; (b) tool_agent ko asli account number chahiye (API call) → RAW; (c) retrieval ko real digits chahiye (masked `****` embedding-match bigaad de) → RAW. Naive regex = pehli deterministic layer (koi LLM call nahi, cheap), defense-in-depth ka ek hissa — naye formats miss ho sakte. Interview twist: masking se downstream toota nahi kyunki masked number ka *intent* same rehta (`************0000 ka balance` abhi bhi `balance`). Aur classic regex gotcha: optional group (`[\s-]?`) galat jagah ho to adjacent whitespace kha jaata → group boundaries dhyaan se.
 - **max_tokens starvation bug:** classifier me `max_tokens=10` → model label emit karne se pehle ruk gaya → empty output → galat fallback. Output ko headroom do; over-optimize mat karo.
 - **ChromaDB 0.5.23 telemetry warning:** `Settings(anonymized_telemetry=False)` + env-var dono ignore → asli fix `logging.getLogger("chromadb.telemetry.product.posthog").setLevel(CRITICAL)` (message `logging.error` se aata). Lesson: source pe fix na ho to logging layer pe suppress.
 - **Agent-calls-tools pattern (tool_agent):** router → intent → tool (external system ka wrapper). RAG (docs) vs Tool (live APIs) — dono ek hi graph me = hybrid knowledge + action agent. mock_bank alag process = separation of concerns (real backend swap trivial).
@@ -117,17 +122,17 @@ Run: `venv/Scripts/python.exe -m uvicorn mock_bank.mock_banking_api:app --port 8
 
 ## 9. NEXT
 
-### Step 4 — Memory/slot-filling ✅ → Guardrails ← ABHI YAHAN → Human-in-the-loop
+### Step 4 — Memory/slot-filling ✅ → Guardrails ✅ → Human-in-the-loop ← ABHI YAHAN
 (Detailed plan: `.claude/plans/resilient-knitting-sun.md`. Step-by-step, confirm karke aage.)
 
 **4.0 Conversational memory + slot-filling ✅ DONE** — MemorySaver checkpointer + `ask(query, thread_id)` + slot-filling (`pending_intent`/`pending_query`). Detail + verification §7 graph.py me. Learning §8 me.
 
-**4.1 Guardrails (`app/guardrails/`) ← ABHI YEH**
-- **(a) Prompt-injection** — `prompt_injection.py`: `check_injection(query)->bool` (regex/keyword: "ignore previous instructions", "you are now", "reveal system prompt", etc.). Graph me naya `guardrail_node` (START ke baad, supervisor se pehle); flag → `blocked=True` + refusal → seedha END (LLM/tool skip).
-- **(b) PII filter** — `pii.py`: `mask_pii(text)` (16-digit account, phone, PAN, card → masked). **Decision:** PII sirf LLM-input + (Step 5) logs me mask; tool_agent RAW query par regex extract karta rahe (asli number API ke liye chahiye). Supervisor + rag_agent ke LLM calls me `mask_pii()` lagao.
-- **Kyun:** defense-in-depth — input sanitization at trust boundary + PII minimization (LLM/3rd-party ko zaroorat se zyada mat do).
+**4.1 Guardrails (`app/guardrails/`)**
+- **(a) Prompt-injection ✅ DONE** — `prompt_injection.py` detector + graph `guardrail_node` wired + verified. Detail §7 graph.py me.
+- **(b) PII filter ✅ DONE** — `pii.py` `mask_pii(text)` (16-digit account/card, phone, PAN → masked) + supervisor & rag_agent LLM-inputs me wired (tool_agent + retrieval RAW). Detail §7 graph.py + learning §8 me. Verified.
+- **Kyun:** defense-in-depth — input sanitization at trust boundary (4.1a) + PII minimization (4.1b: LLM/3rd-party ko zaroorat se zyada mat do).
 
-**4.2 Human-in-the-loop (3.5 defer kiya tha) — fund transfer + approval gate**
+**4.2 Human-in-the-loop (3.5 defer kiya tha) — fund transfer + approval gate ← ABHI YEH**
 - mock_bank: `TransferIn` + `POST /transfer` (accounts valid? balance kaafi? → debit/credit → `{transfer_id,status,new_balance}`; 404/400 errors).
 - supervisor: `INTENTS` me `transfer` add. tool_agent: `handle_transfer(query)` (from/to account + amount extract; multi-slot).
 - graph: transfer + slots ready → LangGraph `interrupt()` se ruko → human "haan/nahi" (`Command(resume=...)`) → execute/cancel. (4.0 ka checkpointer isi ke liye tha.)

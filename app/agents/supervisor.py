@@ -16,6 +16,7 @@ Test:
 """
 
 from app.core.llm_client import chat
+from app.guardrails.pii import mask_pii
 
 # Jitne intents hum handle kar sakte hain (state me isi me se ek jayega).
 INTENTS = {
@@ -42,11 +43,15 @@ def classify_intent(query: str) -> str:
 
     LLM kabhi extra text ya galat label de sakta hai → normalize + validate
     karte hain, aur match na ho to safe fallback 'faq'.
+
+    PII: classifier ko sirf MEANING chahiye (asli account/phone number nahi) →
+    LLM ko masked query bhejte hain (data minimization). Masked number ka intent
+    same rehta hai (e.g. "************0000 ka balance" → abhi bhi 'balance').
     """
     raw = chat(
         messages=[
             {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": query},
+            {"role": "user", "content": mask_pii(query)},
         ],
         temperature=0,      # classification = deterministic chahiye, creative nahi
         max_tokens=32,      # label chhota hai, par itni headroom chahiye — 10 pe
@@ -74,6 +79,7 @@ if __name__ == "__main__":
         "home loan ka status batao",                 # loan_status
         "savings account ka interest rate kya hai",  # faq
         "ATM se paisa nikla nahi par account se cut gaya",  # complaint
+        "account 1111000011110000 ka balance batao",  # balance — PII masked, phir bhi sahi
     ]
     for q in tests:
         print(f"{classify_intent(q):12}  <-  {q}")

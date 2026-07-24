@@ -17,6 +17,7 @@ Test:
 """
 
 from app.core.llm_client import chat
+from app.guardrails.pii import mask_pii
 from app.rag.retriever import retrieve
 
 MAX_DISTANCE = 20.0   # 2.5 me measure kiya: in-domain ~12-17, OOD ~29 → beech me 20
@@ -36,6 +37,8 @@ def answer_faq(query: str) -> dict:
     Return: {"answer": str, "sources": list[str], "grounded": bool}
       grounded=False → koi relevant context nahi mila (LLM call bhi nahi kiya).
     """
+    # Retrieval RAW query par (masked "************0000" embedding match bigaad
+    # deta; aur FAQ queries me PII waise bhi kam hota). Mask sirf LLM-prompt par.
     hits = retrieve(query, k=TOP_K, max_distance=MAX_DISTANCE)
 
     # RAG fallback: threshold ke baad kuch nahi bacha → LLM ko bulao hi mat.
@@ -54,7 +57,7 @@ def answer_faq(query: str) -> dict:
     answer = chat(
         messages=[
             {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": f"CONTEXT:\n{context}\n\nSAWAAL: {query}"},
+            {"role": "user", "content": f"CONTEXT:\n{context}\n\nSAWAAL: {mask_pii(query)}"},
         ],
         temperature=0.2,   # thoda natural, par mostly context-bound
         max_tokens=300,    # ek FAQ jawab ke liye kaafi
